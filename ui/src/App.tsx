@@ -19,6 +19,7 @@ import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { ExpandProjectModal } from './components/ExpandProjectModal'
 import { SettingsModal } from './components/SettingsModal'
+import { AddIterationModal } from './components/AddIterationModal'
 import { Loader2, Settings } from 'lucide-react'
 import type { Feature } from './lib/types'
 
@@ -33,6 +34,7 @@ function App() {
   })
   const [showAddFeature, setShowAddFeature] = useState(false)
   const [showExpandProject, setShowExpandProject] = useState(false)
+  const [showAddIteration, setShowAddIteration] = useState(false)
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
   const [debugOpen, setDebugOpen] = useState(false)
@@ -106,6 +108,12 @@ function App() {
         setAssistantOpen(prev => !prev)
       }
 
+      // I : Add Iteration (when project selected and not running)
+      if ((e.key === 'i' || e.key === 'I') && selectedProject && wsState.agentStatus !== 'running') {
+        e.preventDefault()
+        setShowAddIteration(true)
+      }
+
       // , : Open settings
       if (e.key === ',') {
         e.preventDefault()
@@ -114,7 +122,9 @@ function App() {
 
       // Escape : Close modals
       if (e.key === 'Escape') {
-        if (showExpandProject) {
+        if (showAddIteration) {
+          setShowAddIteration(false)
+        } else if (showExpandProject) {
           setShowExpandProject(false)
         } else if (showSettings) {
           setShowSettings(false)
@@ -132,7 +142,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, showExpandProject, selectedFeature, debugOpen, assistantOpen, features, showSettings])
+  }, [selectedProject, showAddFeature, showExpandProject, showAddIteration, selectedFeature, debugOpen, assistantOpen, features, showSettings, wsState.agentStatus])
 
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
@@ -308,6 +318,14 @@ function App() {
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {/* Add Iteration Modal */}
+      {showAddIteration && selectedProject && (
+        <AddIterationModal
+          projectName={selectedProject}
+          onClose={() => setShowAddIteration(false)}
+        />
       )}
     </div>
   )

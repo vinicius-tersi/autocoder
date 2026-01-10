@@ -15,10 +15,16 @@ export interface ProjectSummary {
   path: string
   has_spec: boolean
   stats: ProjectStats
+  type?: 'greenfield' | 'brownfield'
+  iteration_version?: number
 }
 
 export interface ProjectDetail extends ProjectSummary {
   prompts_dir: string
+}
+
+export interface IterationRequest {
+  instructions: string
 }
 
 // Filesystem types

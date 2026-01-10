@@ -147,6 +147,20 @@ async def run_autonomous_agent(
     # not just if the file exists (empty db should still trigger initializer)
     is_first_run = not has_features(project_dir)
 
+    # NEW: Check for iteration instructions
+    iteration_file = None
+    if not is_first_run:
+        prompts_dir = project_dir / "prompts"
+        # Look for iteration_v*_instructions.md files
+        iteration_files = sorted(prompts_dir.glob("iteration_v*_instructions.md"))
+        if iteration_files:
+            # Use the latest iteration file
+            iteration_file = iteration_files[-1]
+            print(f"⚠️  Found iteration instructions: {iteration_file.name}")
+            print("Will run in ITERATION mode (preserving existing features)")
+            print()
+            is_first_run = True  # Force Initializer to run, but in iteration mode
+
     if is_first_run:
         print("Fresh start - will use initializer agent")
         print()
@@ -183,7 +197,19 @@ async def run_autonomous_agent(
         # Choose prompt based on session type
         # Pass project_dir to enable project-specific prompts
         if is_first_run:
-            prompt = get_initializer_prompt(project_dir)
+            if iteration_file:
+                # Load iteration instructions instead of standard initializer prompt
+                iteration_instructions = iteration_file.read_text(encoding='utf-8')
+                base_prompt = get_initializer_prompt(project_dir)
+                prompt = f"{base_prompt}\n\n---\n\n{iteration_instructions}"
+
+                # Delete iteration file after loading (prevent re-running)
+                iteration_file.unlink()
+                print(f"✅ Loaded iteration instructions (deleted {iteration_file.name})")
+                print()
+            else:
+                # Standard initializer
+                prompt = get_initializer_prompt(project_dir)
             is_first_run = False  # Only use initializer once
         else:
             # Use YOLO prompt if in YOLO mode

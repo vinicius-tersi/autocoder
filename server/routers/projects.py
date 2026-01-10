@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..schemas import (
     ProjectCreate,
@@ -72,6 +73,11 @@ def _get_registry_functions():
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+class IterationRequest(BaseModel):
+    """Request to start a new project iteration."""
+    instructions: str
 
 
 def validate_project_name(name: str) -> str:
@@ -338,3 +344,44 @@ async def get_project_stats_endpoint(name: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     return get_project_stats(project_dir)
+
+
+@router.post("/{project_name}/iteration", response_model=ProjectDetail)
+async def start_iteration(project_name: str, request: IterationRequest):
+    """
+    Start a new iteration of a project.
+
+    This will:
+    1. Detect if project is greenfield or brownfield
+    2. Backup current app_spec.txt with version number
+    3. Backup current features.db
+    4. Create iteration instructions file
+    5. Initializer Agent will process on next run
+    """
+    _init_imports()
+    register_project, unregister_project, get_project_path, list_registered_projects, validate_project_path = _get_registry_functions()
+
+    project_name = validate_project_name(project_name)
+    project_dir = get_project_path(project_name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Project directory not found: {project_dir}")
+
+    # Import iteration utilities
+    from ..services.iteration_manager import create_iteration
+
+    try:
+        result = await create_iteration(project_dir, request.instructions)
+
+        return ProjectDetail(
+            name=project_name,
+            path=str(project_dir),
+            has_spec=_check_spec_exists(project_dir),
+            stats=get_project_stats(project_dir),
+            prompts_dir=str(_get_project_prompts_dir(project_dir)),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create iteration: {str(e)}")

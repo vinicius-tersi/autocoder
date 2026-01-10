@@ -48,6 +48,30 @@ export function useDeleteProject() {
   })
 }
 
+export function useStartIteration(projectName: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (data: { instructions: string }) => {
+      const response = await fetch(`/api/projects/${projectName}/iteration`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to start iteration')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      // Invalidate queries to refresh UI
+      queryClient.invalidateQueries({ queryKey: ['projects', projectName] })
+      queryClient.invalidateQueries({ queryKey: ['features', projectName] })
+    },
+  })
+}
+
 // ============================================================================
 // Features
 // ============================================================================
