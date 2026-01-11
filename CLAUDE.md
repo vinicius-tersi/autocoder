@@ -115,6 +115,7 @@ The FastAPI server provides REST endpoints for the UI:
 - `server/routers/agent.py` - Agent control (start/stop/pause/resume)
 - `server/routers/filesystem.py` - Filesystem browser API with security controls
 - `server/routers/spec_creation.py` - WebSocket for interactive spec creation
+- `server/routers/iteration.py` - WebSocket for brownfield iteration planning
 
 ### Feature Management
 
@@ -131,16 +132,111 @@ MCP tools available to the agent:
 - `feature_skip` - Move feature to end of queue
 - `feature_create_bulk` - Initialize all features (used by initializer)
 
+### Brownfield Development & Iterations
+
+The system supports expanding existing projects through **iterations** - a versioned approach to adding new features to brownfield codebases.
+
+**Project Types:**
+- **Greenfield**: New project with no features yet (initial implementation)
+- **Brownfield**: Existing project with features already implemented (expansion mode)
+
+**Iteration System Files:**
+
+- `server/services/iteration_manager.py` - Core iteration management logic
+  - `detect_project_type()` - Auto-detects greenfield vs brownfield
+  - `create_iteration()` - Creates versioned backups and iteration instructions
+  - `cancel_iteration()` - Cancels active iteration and removes its features
+  - `get_active_iteration()` - Checks for pending iterations
+
+- `server/services/iteration_chat_session.py` - Interactive iteration planning session
+  - Conversational interface for planning project expansions
+  - Integrates with iteration MCP server
+  - Creates iteration files when planning is complete
+
+- `mcp_server/iteration_mcp.py` - MCP server for autonomous iteration completion
+  - `iteration_complete` tool - Called by Claude when iteration planning is finished
+  - Eliminates manual "Complete" button - Claude controls the flow
+  - Returns metadata (version, backups, next steps)
+
+**Iteration Workflow:**
+
+1. User clicks 🌿 GitBranch button in UI (for brownfield projects)
+2. Chat opens via WebSocket (`/api/iteration/ws/{project_name}`)
+3. Claude asks questions to understand expansion requirements
+4. User describes what they want to add through natural conversation
+5. When ready, Claude asks: "Should I finalize this iteration?"
+6. User confirms: "Yes"
+7. **Claude autonomously calls `iteration_complete` MCP tool** with:
+   - Detailed markdown instructions
+   - Brief summary of changes
+8. Iteration system creates:
+   - Versioned spec backup: `prompts/app_spec.txt.v{N}`
+   - Versioned database backup: `features.db.v{N}`
+   - Iteration instructions: `prompts/iteration_v{N}_instructions.md`
+   - Metadata file: `prompts/iteration_v{N}_metadata.json`
+9. UI shows completion screen with metadata
+10. User closes chat and clicks ▶️ Play
+11. Initializer Agent processes iteration file and creates new features
+
+**Key Design: Autonomous Completion via MCP Tool**
+
+Unlike manual button-based flows, iteration completion is **tool-driven**:
+- No "Complete Iteration" button in the UI
+- Claude decides when planning is complete (not the user)
+- Natural conversational flow with confirmation
+- Consistent with Expand Project pattern
+- Better UX - Claude knows when it has enough information
+
+**Versioning System:**
+
+Each iteration gets a sequential version number (v1, v2, v3...):
+- Backups preserve project state before expansion
+- Instructions guide Initializer Agent on what to add
+- Metadata tracks iteration status (active/cancelled/completed)
+- Priority values ensure new features append after existing ones
+
+**Iteration Instructions Format:**
+
+```markdown
+# Iteration v{N} Instructions
+
+**Project Type:** brownfield
+**Date:** [ISO timestamp]
+**Previous Spec Backup:** app_spec.txt.v{N}
+**Previous DB Backup:** features.db.v{N}
+
+## Expansion Requirements
+[User's requirements from chat conversation]
+
+## Instructions for Initializer Agent
+1. Read PREVIOUS spec to understand existing features
+2. Update CURRENT app_spec.txt (preserve + add new)
+3. Create ONLY NEW features via feature_create_bulk
+4. Set priority starting from {next_priority}
+5. DO NOT recreate project structure or overwrite code
+```
+
+**Cancellation Support:**
+
+Active iterations can be cancelled via UI:
+- Removes all features created in that iteration (by priority range)
+- Optionally restores backups (spec + database)
+- Updates iteration metadata to "cancelled" status
+- Triggered by X button on iteration indicator
+
 ### React UI (ui/)
 
 - Tech stack: React 18, TypeScript, TanStack Query, Tailwind CSS v4, Radix UI
 - `src/App.tsx` - Main app with project selection, kanban board, agent controls
 - `src/hooks/useWebSocket.ts` - Real-time updates via WebSocket
 - `src/hooks/useProjects.ts` - React Query hooks for API calls
+- `src/hooks/useIterationChat.ts` - WebSocket hook for iteration planning chat
 - `src/lib/api.ts` - REST API client
 - `src/lib/types.ts` - TypeScript type definitions
 - `src/components/FolderBrowser.tsx` - Server-side filesystem browser for project folder selection
 - `src/components/NewProjectModal.tsx` - Multi-step project creation wizard
+- `src/components/IterationChat.tsx` - Conversational iteration planning interface
+- `src/components/IterationChatModal.tsx` - Modal wrapper for iteration chat
 
 ### Project Structure for Generated Apps
 

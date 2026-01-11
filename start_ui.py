@@ -289,7 +289,14 @@ def main() -> None:
             except KeyboardInterrupt:
                 print("\n\nShutting down...")
                 server.terminate()
-                server.wait()
+                try:
+                    server.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    print("Force killing server...")
+                    server.kill()
+                    server.wait()
+                print("Server stopped.")
+                sys.exit(0)
 
     except Exception as e:
         print(f"\nERROR: {e}")
