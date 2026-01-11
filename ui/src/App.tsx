@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useProjects, useFeatures, useAgentStatus } from './hooks/useProjects'
+import { useProjects, useFeatures, useAgentStatus, useActiveIteration, useCancelIteration } from './hooks/useProjects'
 import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
@@ -19,8 +19,9 @@ import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { ExpandProjectModal } from './components/ExpandProjectModal'
 import { SettingsModal } from './components/SettingsModal'
-import { AddIterationModal } from './components/AddIterationModal'
-import { Loader2, Settings } from 'lucide-react'
+import { IterationChatModal } from './components/IterationChatModal'
+import { CancelIterationDialog } from './components/CancelIterationDialog'
+import { Loader2, Settings, Plus, Sparkles, GitBranch, MoreVertical, XCircle } from 'lucide-react'
 import type { Feature } from './lib/types'
 
 function App() {
@@ -41,12 +42,16 @@ function App() {
   const [debugPanelHeight, setDebugPanelHeight] = useState(288) // Default height
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showActionsMenu, setShowActionsMenu] = useState(false)
+  const [showCancelIteration, setShowCancelIteration] = useState(false)
 
   const queryClient = useQueryClient()
   const { data: projects, isLoading: projectsLoading } = useProjects()
   const { data: features } = useFeatures(selectedProject)
   useAgentStatus(selectedProject) // Keep polling for status updates
   const wsState = useProjectWebSocket(selectedProject)
+  const { data: activeIterationData } = useActiveIteration(selectedProject)
+  const cancelIterationMutation = useCancelIteration()
 
   // Play sounds when features move between columns
   useFeatureSound(features)
@@ -181,10 +186,93 @@ function App() {
 
               {selectedProject && (
                 <>
+                  {/* Feature Action Buttons */}
+                  <button
+                    onClick={() => setShowAddFeature(true)}
+                    className="neo-btn neo-btn-primary text-sm py-2 px-3 flex items-center gap-2"
+                    title="Add Feature (N)"
+                  >
+                    <Plus size={18} />
+                    <span>Add Feature</span>
+                  </button>
+
+                  {features && (features.pending.length + features.in_progress.length + features.done.length) > 0 && (
+                    <>
+                      <button
+                        onClick={() => setShowExpandProject(true)}
+                        className="neo-btn bg-[var(--color-neo-progress)] text-black text-sm py-2 px-3 flex items-center gap-2"
+                        title="Expand Project (E)"
+                      >
+                        <Sparkles size={18} />
+                        <span>Expand Project</span>
+                      </button>
+
+                      <button
+                        onClick={() => setShowAddIteration(true)}
+                        className="neo-btn bg-[var(--color-neo-done)] text-black text-sm py-2 px-3 flex items-center gap-2"
+                        title="Add Iteration (I)"
+                        disabled={wsState.agentStatus === 'running'}
+                      >
+                        <GitBranch size={18} />
+                        <span>Add Iteration</span>
+                      </button>
+                    </>
+                  )}
+
                   <AgentControl
                     projectName={selectedProject}
                     status={wsState.agentStatus}
                   />
+
+                  {/* Actions Dropdown Menu */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowActionsMenu(!showActionsMenu)}
+                      className="neo-btn text-sm py-2 px-3"
+                      title="Actions Menu"
+                      aria-label="Open Actions Menu"
+                    >
+                      <MoreVertical size={18} />
+                    </button>
+
+                    {showActionsMenu && (
+                      <>
+                        {/* Backdrop to close menu */}
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setShowActionsMenu(false)}
+                        />
+
+                        {/* Dropdown Menu */}
+                        <div className="absolute right-0 mt-2 w-64 neo-card p-2 z-20 space-y-1">
+                          {activeIterationData?.active && activeIterationData.iteration && (
+                            <button
+                              onClick={() => {
+                                setShowActionsMenu(false)
+                                setShowCancelIteration(true)
+                              }}
+                              disabled={wsState.agentStatus === 'running'}
+                              className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-500/10 text-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm transition-colors"
+                            >
+                              <XCircle size={16} />
+                              <div>
+                                <div className="font-medium">Cancel Iteration v{activeIterationData.iteration.version}</div>
+                                <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                                  Remove iteration features
+                                </div>
+                              </div>
+                            </button>
+                          )}
+
+                          {!activeIterationData?.active && (
+                            <div className="px-3 py-2 text-sm text-[var(--color-neo-text-secondary)] italic">
+                              No active iteration
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
 
                   <button
                     onClick={() => setShowSettings(true)}
@@ -252,8 +340,6 @@ function App() {
             <KanbanBoard
               features={features}
               onFeatureClick={setSelectedFeature}
-              onAddFeature={() => setShowAddFeature(true)}
-              onExpandProject={() => setShowExpandProject(true)}
             />
           </div>
         )}
@@ -320,11 +406,32 @@ function App() {
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
 
-      {/* Add Iteration Modal */}
+      {/* Add Iteration Chat Modal */}
       {showAddIteration && selectedProject && (
-        <AddIterationModal
+        <IterationChatModal
+          isOpen={showAddIteration}
           projectName={selectedProject}
           onClose={() => setShowAddIteration(false)}
+          onComplete={(metadata) => {
+            console.log('Iteration created:', metadata)
+            // Refresh features list
+            queryClient.invalidateQueries({ queryKey: ['features', selectedProject] })
+          }}
+        />
+      )}
+
+      {/* Cancel Iteration Dialog */}
+      {showCancelIteration && selectedProject && activeIterationData?.iteration && (
+        <CancelIterationDialog
+          iteration={activeIterationData.iteration}
+          onCancel={async (version, restoreBackups) => {
+            return await cancelIterationMutation.mutateAsync({
+              project_name: selectedProject,
+              version,
+              restore_backups: restoreBackups,
+            })
+          }}
+          onClose={() => setShowCancelIteration(false)}
         />
       )}
     </div>

@@ -301,3 +301,54 @@ export async function updateSettings(settings: SettingsUpdate): Promise<Settings
     body: JSON.stringify(settings),
   })
 }
+
+// ============================================================================
+// Iteration API
+// ============================================================================
+
+export interface ActiveIterationResponse {
+  active: boolean
+  iteration?: {
+    version: number
+    created_at: string
+    status: string
+    project_type: string
+    spec_backup: string
+    db_backup: string
+    instructions_file: string
+    feature_count_before: number
+    next_priority: number
+    features_created: number[]
+  }
+}
+
+export interface CancelIterationRequest {
+  project_name: string
+  version: number
+  restore_backups?: boolean
+}
+
+export interface CancelIterationResponse {
+  success: boolean
+  features_removed: number
+  features_by_status: {
+    pending: number
+    in_progress: number
+    done: number
+  }
+  backups_restored: boolean
+  message: string
+}
+
+export async function getActiveIteration(projectName: string): Promise<ActiveIterationResponse> {
+  return fetchJSON(`/iteration/active/${encodeURIComponent(projectName)}`)
+}
+
+export async function cancelIteration(
+  request: CancelIterationRequest
+): Promise<CancelIterationResponse> {
+  return fetchJSON('/iteration/cancel', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}

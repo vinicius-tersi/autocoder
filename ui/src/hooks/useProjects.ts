@@ -295,3 +295,29 @@ export function useUpdateSettings() {
     },
   })
 }
+
+// ============================================================================
+// Iteration
+// ============================================================================
+
+export function useActiveIteration(projectName: string | null) {
+  return useQuery({
+    queryKey: ['active-iteration', projectName],
+    queryFn: () => api.getActiveIteration(projectName!),
+    enabled: !!projectName,
+    refetchInterval: 5000, // Poll every 5 seconds to detect new iterations
+  })
+}
+
+export function useCancelIteration() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (request: api.CancelIterationRequest) => api.cancelIteration(request),
+    onSuccess: (_, variables) => {
+      // Invalidate queries to refresh UI
+      queryClient.invalidateQueries({ queryKey: ['active-iteration', variables.project_name] })
+      queryClient.invalidateQueries({ queryKey: ['features', variables.project_name] })
+    },
+  })
+}

@@ -6,6 +6,7 @@ Manages project iterations for brownfield development.
 Provides versioning, backups, and iteration instructions for expanding existing projects.
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -317,6 +318,23 @@ You are expanding an existing project (brownfield).
 
     instructions_file.write_text(instructions_content, encoding="utf-8")
 
+    # Step 6: Create metadata JSON file for iteration tracking
+    metadata_file = prompts_dir / f"iteration_v{version}_metadata.json"
+    metadata = {
+        "version": version,
+        "created_at": timestamp,
+        "status": "active",
+        "project_type": project_type,
+        "spec_backup": spec_backup.name,
+        "db_backup": db_backup.name,
+        "instructions_file": instructions_file.name,
+        "feature_count_before": feature_count,
+        "next_priority": next_priority,
+        "features_created": []  # Will be populated by initializer agent
+    }
+
+    metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
     return {
         "version": version,
         "project_type": project_type,
@@ -325,4 +343,178 @@ You are expanding an existing project (brownfield).
         "instructions_file": str(instructions_file),
         "feature_count": feature_count,
         "next_priority": next_priority,
+    }
+
+
+def get_active_iteration(project_dir: Path) -> dict | None:
+    """
+    Get the active iteration for a project (if any).
+
+    Args:
+        project_dir: Path to the project directory
+
+    Returns:
+        Iteration metadata dict if active iteration exists, None otherwise
+    """
+    prompts_dir = project_dir / "prompts"
+    if not prompts_dir.exists():
+        return None
+
+    # Find all iteration metadata files
+    metadata_files = sorted(prompts_dir.glob("iteration_v*_metadata.json"))
+    if not metadata_files:
+        return None
+
+    # Check most recent iteration (highest version)
+    for metadata_file in reversed(metadata_files):
+        try:
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if metadata.get("status") == "active":
+                # Add full paths for convenience
+                metadata["metadata_file"] = str(metadata_file)
+                metadata["instructions_file_path"] = str(
+                    prompts_dir / metadata["instructions_file"]
+                )
+                return metadata
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    return None
+
+
+async def cancel_iteration(
+    project_dir: Path,
+    version: int,
+    restore_backups: bool = False
+) -> dict:
+    """
+    Cancel an active iteration and remove its features.
+
+    Args:
+        project_dir: Path to the project directory
+        version: Iteration version to cancel
+        restore_backups: If True, restore spec and database backups
+
+    Returns:
+        Dictionary with cancellation results:
+            - success: bool
+            - features_removed: int
+            - features_by_status: dict with counts per status
+            - backups_restored: bool
+            - message: str
+
+    Raises:
+        ValueError: If iteration doesn't exist or is not active
+        RuntimeError: If cancellation fails
+    """
+    prompts_dir = project_dir / "prompts"
+    metadata_file = prompts_dir / f"iteration_v{version}_metadata.json"
+
+    # Step 1: Load and validate metadata
+    if not metadata_file.exists():
+        raise ValueError(f"Iteration v{version} metadata not found")
+
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid metadata file for iteration v{version}")
+
+    if metadata.get("status") != "active":
+        raise ValueError(
+            f"Iteration v{version} is not active (status: {metadata.get('status')})"
+        )
+
+    # Step 2: Identify features to remove (priority >= next_priority)
+    features_db = project_dir / "features.db"
+    if not features_db.exists():
+        raise RuntimeError("Features database not found")
+
+    next_priority = metadata["next_priority"]
+
+    try:
+        conn = sqlite3.connect(str(features_db))
+        cursor = conn.cursor()
+
+        # Get features to remove with their status
+        cursor.execute("""
+            SELECT id, passes, in_progress
+            FROM features
+            WHERE priority >= ?
+        """, (next_priority,))
+
+        features_to_remove = cursor.fetchall()
+
+        # Count by status
+        features_by_status = {
+            "pending": 0,
+            "in_progress": 0,
+            "done": 0
+        }
+
+        for _, passes, in_progress in features_to_remove:
+            if passes:
+                features_by_status["done"] += 1
+            elif in_progress:
+                features_by_status["in_progress"] += 1
+            else:
+                features_by_status["pending"] += 1
+
+        # Remove features
+        cursor.execute("DELETE FROM features WHERE priority >= ?", (next_priority,))
+        conn.commit()
+        conn.close()
+
+        features_removed = len(features_to_remove)
+
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Database error: {e}")
+
+    # Step 3: (Optional) Restore backups
+    backups_restored = False
+    if restore_backups:
+        try:
+            import shutil
+
+            # Restore app_spec.txt
+            spec_backup = prompts_dir / metadata["spec_backup"]
+            if spec_backup.exists():
+                app_spec_file = prompts_dir / "app_spec.txt"
+
+                # Read backup and remove metadata header
+                backup_content = spec_backup.read_text(encoding="utf-8")
+                # Remove XML comment at the top (ends with -->\n\n)
+                if backup_content.startswith("<!--"):
+                    content_start = backup_content.find("-->\n\n")
+                    if content_start != -1:
+                        backup_content = backup_content[content_start + 5:]
+
+                app_spec_file.write_text(backup_content, encoding="utf-8")
+
+            # Restore features.db
+            db_backup = project_dir / metadata["db_backup"]
+            if db_backup.exists():
+                shutil.copy2(str(db_backup), str(features_db))
+
+            backups_restored = True
+
+        except Exception as e:
+            # Log but don't fail - features are already removed
+            print(f"Warning: Failed to restore backups: {e}")
+
+    # Step 4: Update metadata status to "cancelled"
+    metadata["status"] = "cancelled"
+    metadata["cancelled_at"] = datetime.now().isoformat()
+    metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    # Step 5: Remove iteration instructions file
+    instructions_file = prompts_dir / metadata["instructions_file"]
+    if instructions_file.exists():
+        instructions_file.unlink()
+
+    return {
+        "success": True,
+        "features_removed": features_removed,
+        "features_by_status": features_by_status,
+        "backups_restored": backups_restored,
+        "message": f"Iteration v{version} cancelled. {features_removed} features removed."
     }
