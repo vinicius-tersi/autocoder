@@ -135,7 +135,7 @@ export function useIterationChat({
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Failed to start session')
     }
-  }, [projectName, onError, isComplete])
+  }, [projectName, onError, onComplete, isComplete])
 
   const sendMessage = useCallback(
     async (content: string, attachments: ImageAttachment[] = []) => {
